@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>暗线撤离 · DARKLINE EXFIL</title>
+<style>
+  /* ============ 全局：军用终端风 ============ */
+  :root{
+    --bg:#080b09;          /* 底色：近黑带绿 */
+    --panel:#0d1210;       /* 面板 */
+    --panel-2:#111815;
+    --line:#1f3128;        /* 边框 */
+    --text:#c8d6c9;        /* 主文字 */
+    --muted:#6b7d6f;       /* 次要文字 */
+    --green:#5ee08a;       /* 军绿荧光 */
+    --amber:#e8b44a;       /* 警示黄 */
+    --red:#e2554b;         /* 危险红 */
+    --blue:#5aa9e6;        /* 信息蓝 */
+    --mono:"Consolas","SFMono-Regular","Menlo","Courier New","Microsoft YaHei",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:14px;
+    line-height:1.6;
+    padding:20px 16px 40px;
+    /* 扫描线纹理（纯 CSS） */
+    background-image:repeating-linear-gradient(0deg, rgba(94,224,138,.025) 0 1px, transparent 1px 3px);
+  }
+  ::selection{background:rgba(94,224,138,.25);}
+  .wrap{max-width:1000px;margin:0 auto;}
+
+  /* ============ 顶栏 ============ */
+  header{
+    display:flex;justify-content:space-between;align-items:flex-end;
+    border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:6px;flex-wrap:wrap;gap:8px;
+  }
+  .logo{font-size:22px;letter-spacing:4px;color:var(--green);font-weight:bold;text-shadow:0 0 12px rgba(94,224,138,.45);}
+  .logo small{display:block;font-size:11px;letter-spacing:3px;color:var(--muted);font-weight:normal;text-shadow:none;}
+  .sys{font-size:11px;color:var(--muted);text-align:right;}
+  .sys b{color:var(--green);font-weight:normal;}
+  .blink{animation:blink 1.2s steps(1) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+
+  /* 设计目标说明 */
+  .goal{
+    border-left:3px solid var(--amber);
+    background:linear-gradient(90deg, rgba(232,180,74,.08), transparent);
+    padding:8px 12px;margin:10px 0 16px;font-size:12.5px;color:#d9cfa8;
+  }
+  .goal b{color:var(--amber);}
+
+  /* ============ 数据条 ============ */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;}
+  .stat{background:var(--panel);border:1px solid var(--line);padding:8px 12px;}
+  .stat .k{font-size:11px;color:var(--muted);letter-spacing:1px;}
+  .stat .v{font-size:19px;color:var(--green);font-weight:bold;transition:color .2s;}
+  .stat .v.warn{color:var(--amber);}
+
+  /* ============ 布局 ============ */
+  .layout{display:grid;grid-template-columns:1.35fr 1fr;gap:14px;align-items:start;}
+  @media (max-width:820px){ .layout{grid-template-columns:1fr;} .stats{grid-template-columns:repeat(2,1fr);} }
+
+  .panel{background:var(--panel);border:1px solid var(--line);padding:14px;margin-bottom:14px;}
+  .panel h2{
+    font-size:12px;letter-spacing:2px;color:var(--muted);font-weight:normal;
+    border-bottom:1px dashed var(--line);padding-bottom:6px;margin-bottom:10px;
+  }
+  .panel h2::before{content:"▌ ";color:var(--green);}
+
+  /* ============ 按钮 ============ */
+  .btns{display:flex;flex-direction:column;gap:8px;}
+  button{
+    font-family:var(--mono);font-size:14px;color:var(--text);cursor:pointer;
+    background:var(--panel-2);border:1px solid #2b4438;padding:10px 14px;text-align:left;
+    transition:all .15s;position:relative;
+  }
+  button:hover:not(:disabled){border-color:var(--green);color:var(--green);box-shadow:0 0 0 1px rgba(94,224,138,.25) inset;}
+  button:active:not(:disabled){transform:translateY(1px);}
+  button:disabled{opacity:.35;cursor:not-allowed;}
+  button small{display:block;color:var(--muted);font-size:11.5px;line-height:1.45;}
+  button:hover:not(:disabled) small{color:#8fb79a;}
+  button.primary{border-color:var(--green);background:rgba(94,224,138,.08);color:var(--green);font-weight:bold;}
+  button.danger{border-color:var(--red);background:rgba(226,85,75,.08);color:#f09088;font-weight:bold;}
+  button.danger:hover:not(:disabled){border-color:var(--red);color:var(--red);}
+  button.amber{border-color:var(--amber);background:rgba(232,180,74,.08);color:var(--amber);font-weight:bold;}
+  button .key{float:right;color:var(--muted);font-size:11px;}
+  .btns button{width:100%;}
+
+  /* ============ 日志窗口 ============ */
+  .log{
+    height:300px;overflow-y:auto;background:#060907;border:1px solid var(--line);
+    padding:10px 12px;font-size:12.5px;line-height:1.7;
+  }
+  .log .line{padding:1px 0;white-space:pre-wrap;word-break:break-all;}
+  .log .t{color:#3f5547;margin-right:6px;}
+  .log .sys{color:var(--blue);text-align:left;}
+  .log .good{color:var(--green);}
+  .log .bad{color:var(--red);}
+  .log .warn{color:var(--amber);}
+  .log .rare{color:#d68cff;text-shadow:0 0 8px rgba(214,140,255,.5);}
+  .log .dim{color:var(--muted);}
+  .log::-webkit-scrollbar{width:8px;}
+  .log::-webkit-scrollbar-thumb{background:#22352a;}
+
+  /* ============ 行动进度 ============ */
+  .pips{display:flex;gap:6px;margin:10px 0 4px;}
+  .pip{
+    flex:1;height:22px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+    font-size:10.5px;color:var(--muted);background:#0a0f0c;transition:all .2s;
+  }
+  .pip.act{border-color:var(--green);color:var(--bg);background:var(--green);font-weight:bold;}
+  .pip.done{border-color:#2c4437;color:#4d6556;}
+
+  /* ============ 背包 ============ */
+  .bag{display:flex;flex-direction:column;gap:4px;font-size:12.5px;min-height:60px;}
+  .bag .empty{color:#3f5547;font-style:italic;}
+  .bag .item{display:flex;justify-content:space-between;border-bottom:1px dotted #1b2a22;padding:3px 0;}
+  .bag .item .n{color:#a9bfae;}
+  .bag .item .n.rare{color:#d68cff;}
+  .bag .item .p{color:var(--green);}
+  .bag .total{border-top:1px solid var(--line);margin-top:4px;padding-top:6px;display:flex;justify-content:space-between;color:var(--amber);}
+  .risk-row{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:6px;}
+  .risk-row b{color:var(--text);font-weight:normal;}
+  .bar{height:6px;background:#0a0f0c;border:1px solid var(--line);margin-top:4px;}
+  .bar > i{display:block;height:100%;background:var(--green);transition:width .3s, background .3s;}
+
+  /* ============ 撤离弹窗 ============ */
+  .overlay{
+    position:fixed;inset:0;background:rgba(3,6,4,.82);display:none;align-items:center;justify-content:center;
+    padding:20px;z-index:50;backdrop-filter:blur(2px);
+  }
+  .overlay.show{display:flex;}
+  .modal{
+    max-width:560px;width:100%;background:var(--panel);border:1px solid var(--amber);
+    box-shadow:0 0 40px rgba(232,180,74,.12);padding:22px;animation:pop .18s ease-out;
+  }
+  @keyframes pop{from{transform:scale(.96);opacity:0;}to{transform:scale(1);opacity:1;}}
+  .modal h3{color:var(--amber);font-size:16px;letter-spacing:3px;margin-bottom:6px;}
+  .modal .sub{color:var(--muted);font-size:12px;margin-bottom:14px;}
+  .modal .stats-line{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 16px;font-size:13px;margin:12px 0;}
+  .modal .stats-line div{display:flex;justify-content:space-between;border-bottom:1px dotted #1b2a22;padding:3px 0;}
+  .modal .stats-line span:last-child{color:var(--green);font-weight:bold;}
+  .modal .stats-line span.rslt-neg{color:var(--red);}
+  .modal .btns{flex-direction:row;flex-wrap:wrap;}
+  .modal .btns button{width:auto;flex:1;min-width:180px;}
+
+  /* ============ 调参面板 ============ */
+  .cfg label{display:block;margin-bottom:10px;}
+  .cfg .row{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-bottom:2px;}
+  .cfg .row b{color:var(--green);font-weight:bold;}
+  .cfg input[type=range]{width:100%;accent-color:#5ee08a;height:16px;cursor:pointer;background:transparent;}
+  .cfg .hint{font-size:11px;color:#4d6556;margin-top:-4px;margin-bottom:10px;}
+  .cfg .foot{display:flex;gap:8px;margin-top:6px;}
+  .cfg .foot button{flex:1;font-size:12px;padding:6px 8px;text-align:center;}
+  .cfg .foot button.primary{color:var(--green);}
+
+  footer{text-align:center;color:#33453a;font-size:11px;margin-top:20px;letter-spacing:1px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">暗线撤离<small>DARKLINE · EXFIL PROTOCOL v0.1</small></div>
+    <div class="sys">SESSION <b id="sessionId">----</b> · <span class="blink">●</span> LINK STABLE</div>
+  </header>
+
+  <!-- 策划意图：开门见山 -->
+  <div class="goal">
+    <b>〔设计目标说明〕</b>本原型想让玩家体验「<b>风险收益权衡</b>」：每一局都得在"见好就收"和"再搜一次"之间做选择——撤离越晚，收益越高，被埋伏的概率也越高。
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">累计资产</div><div class="v" id="statTotal">0</div></div>
+    <div class="stat"><div class="k">历史最高</div><div class="v" id="statPeak">0</div></div>
+    <div class="stat"><div class="k">已撤离次数</div><div class="v" id="statRuns">0</div></div>
+    <div class="stat"><div class="k">撤离成功率</div><div class="v" id="statRate">--</div></div>
+  </div>
+
+  <div class="layout">
+    <!-- 左栏：主行动区 -->
+    <div>
+      <div class="panel">
+        <h2>作战指令 / COMMAND</h2>
+        <div id="phaseText" style="font-size:12.5px;color:var(--muted);margin-bottom:10px;"></div>
+        <div class="btns" id="actions"></div>
+      </div>
+
+      <div class="panel">
+        <h2>行动序列 / SEQUENCE</h2>
+        <div class="pips" id="pips"></div>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <!-- 右栏：状态 + 调参 -->
+    <div>
+      <div class="panel">
+        <h2>背包状态 / INVENTORY</h2>
+        <div class="bag" id="bag"></div>
+        <div class="risk-row"><span>当前暴露风险</span><b id="riskVal">0%</b></div>
+        <div class="bar"><i id="riskBar" style="width:0%"></i></div>
+      </div>
+
+      <div class="panel cfg">
+        <h2>调参面板 / TUNING</h2>
+        <div id="cfgSliders"></div>
+        <div class="hint">拖拽即时生效，点「应用并重开」开始新对局。</div>
+        <div class="foot">
+          <button class="primary" id="btnApply">↻ 应用并重开</button>
+          <button id="btnReset">恢复默认</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>零依赖 · 单文件 · 双击即玩 ── 数值可在右侧实时调整</footer>
+</div>
+
+<!-- 结算弹窗 -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h3 id="mTitle">行动结束</h3>
+    <div class="sub" id="mSub"></div>
+    <div class="stats-line" id="mStats"></div>
+    <div class="btns" id="mBtns"></div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+ *  《暗线撤离》 —— 单文件原型
+ *  所有关键数值集中在 CONFIG，调参面板直接读写它。
+ * ========================================================= */
+
+/* ---------- 1. 默认数值配置（调参面板只改这一份） ---------- */
+const DEFAULT_CONFIG = {
+  // 开局资金
+  startFunds: 1000,
+
+  // 两种进场方式（成本、背包格数、装备综合战力/胜率修正）
+  loadouts: {
+    light: { name: "轻装进场", cost: 100, bag: 4,  winBonus: 0,    searchBonus: 0,  desc: "成本低、背包小、可搜物资少" },
+    heavy: { name: "全装进场", cost: 350, bag: 10, winBonus: 0.20, searchBonus: 10, desc: "成本高、背包大、遇敌胜率高、搜到好东西概率更高" }
+  },
+
+  // 每局基础行动次数（搜索/移动）
+  baseActions: 5,
+
+  // 单个行动的三档结果概率
+  actionChance: {
+    loot: 0.50,   // 搜到物资
+    enemy: 0.30,  // 遭遇敌人
+    none: 0.20    // 无事发生（浪费一次行动）
+  },
+
+  // 战斗：基础胜率（未加装备修正前）
+  baseWinRate: 0.45,
+
+  // 稀有物资倍率（普通物资价值 × 稀有倍率）
+  rareMultiplier: 3.5,
+
+  // 物资价值区间（普通物资）
+  lootValue: { min: 60, max: 220 },
+
+  // 稀有物资出现概率（占"搜到物资"的比例）
+  rareChance: 0.18,
+
+  // 撤离阶段赌一把：每多赌一轮，埋伏概率的递增步长
+  ambushBase: 0.10,   // 第一次赌的埋伏概率
+  ambushStep: 0.15,   // 之后每赌一轮，埋伏概率加成叠加
+  ambushMax: 0.90,    // 埋伏概率上限
+
+  // 每赌一轮，背包容量额外 +N 格（鼓励贪）
+  gambleBagBonus: 2,
+
+  // 赌一轮时的行动次数
+  gambleActions: 1
+};
+
+/* ---------- 2. 运行期状态 ---------- */
+const SAVE_KEY = "darkline_exfil_save_v1";
+let CONFIG = JSON.parse(JSON.stringify(DEFAULT_CONFIG)); // 运行中的配置（可变）
+let save = loadSave();                                    // 持久化数据
+let G = null;                                             // 当前对局状态
+const logEl   = document.getElementById("log");
+const actionEl= document.getElementById("actions");
+let logLines = 0; // 用于给日志加时间戳序号
+
+/* ---------- 3. 存档读写 ---------- */
+function loadSave(){
+  const base = { total: 0, peak: 0, runs: 0, success: 0, bestRun: 0 };
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(!raw) return base;
+    return Object.assign(base, JSON.parse(raw));
+  }catch(e){ return base; }
+}
+function persist(){
+  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }catch(e){}
+}
+
+/* ---------- 4. 工具函数 ---------- */
+const rand  = (a,b)=> a + Math.random()*(b-a);
+const pick  = arr => arr[Math.floor(Math.random()*arr.length)];
+const clamp = (v,a,b)=> Math.max(a, Math.min(b, v));
+const fmt   = n => Math.round(n).toLocaleString("zh-CN");
+const pct   = p => (p*100).toFixed(1) + "%";
+
+/* ---------- 5. 日志输出 ---------- */
+function log(msg, cls="", stamp=true){
+  const line = document.createElement("div");
+  line.className = "line " + cls;
+  if(stamp){
+    logLines++;
+    const t = document.createElement("span");
+    t.className = "t"; t.textContent = "[" + String(logLines).padStart(2,"0") + "]";
+    line.appendChild(t);
+  }
+  const s = document.createElement("span");
+  s.textContent = msg;
+  line.appendChild(s);
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+/* ---------- 6. 弹窗 ---------- */
+const overlayEl = document.getElementById("overlay");
+function showModal(title, sub, rows, buttons){
+  document.getElementById("mTitle").textContent = title;
+  document.getElementById("mSub").textContent = sub;
+  const box = document.getElementById("mStats");
+  box.innerHTML = "";
+  rows.forEach(([k,v,neg])=>{
+    const d = document.createElement("div");
+    d.innerHTML = `<span>${k}</span><span class="${neg?"rslt-neg":""}">${v}</span>`;
+    box.appendChild(d);
+  });
+  const btns = document.getElementById("mBtns");
+  btns.innerHTML = "";
+  buttons.forEach(b=>{
+    const el = document.createElement("button");
+    el.className = b.cls || "";
+    el.textContent = b.label;
+    el.onclick = ()=>{ hideModal(); b.fn && b.fn(); };
+    btns.appendChild(el);
+  });
+  overlayEl.classList.add("show");
+}
+function hideModal(){ overlayEl.classList.remove("show"); }
+
+/* ---------- 7. 渲染：统计栏 ---------- */
+function renderStats(){
+  const t = document.getElementById("statTotal");
+  t.textContent = fmt(save.total);
+  t.className = "v" + (save.total < 0 ? " warn" : "");
+  document.getElementById("statPeak").textContent = fmt(save.peak);
+  document.getElementById("statRuns").textContent = save.runs;
+  document.getElementById("statRate").textContent =
+    save.runs > 0 ? pct(save.success / save.runs) : "--";
+  document.getElementById("sessionId").textContent =
+    (save.runs+1).toString().padStart(3,"0");
+}
+
+/* ---------- 8. 渲染：背包与风险 ---------- */
+function bagValue(){ return (G && G.bag) ? G.bag.reduce((s,i)=>s+i.value, 0) : 0; }
+
+function renderBag(){
+  const el = document.getElementById("bag");
+  el.innerHTML = "";
+  if(!G){ el.innerHTML = '<div class="empty">— 尚未进场 —</div>'; return; }
+
+  if(G.bag.length === 0){
+    el.innerHTML = '<div class="empty">— 背包空空 —</div>';
+  }else{
+    G.bag.forEach(it=>{
+      const d = document.createElement("div");
+      d.className = "item";
+      d.innerHTML = `<span class="n ${it.rare?"rare":""}">${it.rare?"◆ ":"· "}${it.name}</span>
+                     <span class="p">+${fmt(it.value)}</span>`;
+      el.appendChild(d);
+    });
+  }
+  const total = document.createElement("div");
+  total.className = "total";
+  total.innerHTML = `<span>物资总值 ${G.bag.length}/${G.bagCap}</span><span>${fmt(bagValue())}</span>`;
+  el.appendChild(total);
+}
+
+function renderRisk(){
+  const p = G ? currentAmbushRate() : 0;
+  const v = Math.round(p*100);
+  document.getElementById("riskVal").textContent = (G ? v : 0) + "%";
+  const bar = document.getElementById("riskBar");
+  bar.style.width = (G ? v : 0) + "%";
+  bar.style.background = p > 0.6 ? "var(--red)" : p > 0.3 ? "var(--amber)" : "var(--green)";
+}
+
+function renderPips(){
+  const el = document.getElementById("pips");
+  el.innerHTML = "";
+  if(!G) return;
+  const totalSlots = CONFIG.baseActions;
+  for(let i=0;i<totalSlots;i++){
+    const d = document.createElement("div");
+    d.className = "pip" + (i < G.actionIdx ? " done" : i === G.actionIdx && G.phase==="search" ? " act" : "");
+    d.textContent = i < G.actionIdx ? "✔" : (i+1);
+    el.appendChild(d);
+  }
+  // 赌局额外格
+  for(let i=0;i<G.gambles;i++){
+    const d = document.createElement("div");
+    d.className = "pip act";
+    d.style.borderColor = "var(--amber)";
+    d.style.color = "var(--bg)";
+    d.style.background = "var(--amber)";
+    d.textContent = "赌" + (i+1);
+    el.appendChild(d);
+  }
+}
+
+/* ---------- 9. 核心数值计算 ---------- */
+// 当前时刻的埋伏概率：只与已经赌了几轮有关
+function currentAmbushRate(){
+  if(!G || G.gambles === 0) return 0;
+  return Math.min(CONFIG.ambushMax, CONFIG.ambushBase + CONFIG.ambushStep * (G.gambles - 1));
+}
+// 当前战斗胜率
+function currentWinRate(){
+  if(!G) return 0;
+  return clamp(CONFIG.baseWinRate + CONFIG.loadouts[G.loadout].winBonus, 0.05, 0.95);
+}
+// 稀有倍率
+function rareMul(){ return Math.max(1, CONFIG.rareMultiplier); }
+
+/* ---------- 10. 开局：进入据点 ---------- */
+function startRun(loadoutKey){
+  const L = CONFIG.loadouts[loadoutKey];
+  // 资金不足：不允许进场
+  if(save.total < L.cost){
+    log(`资金不足：${L.name}需要 ${L.cost}，当前累计资产 ${fmt(save.total)}。`, "bad");
+    showModal("无法进场", "资金不足，请先在调参面板降低进场成本，或换轻装试试。",
+      [["需要资金", fmt(L.cost)], ["当前资产", fmt(save.total)]],
+      [{label:"知道了", cls:"primary"}]);
+    return;
+  }
+
+  hideModal();
+  logEl.innerHTML = ""; logLines = 0;
+  save.total -= L.cost;  // 成本进场即扣，无论成功与否
+  persist();
+
+  G = {
+    loadout: loadoutKey,
+    bag: [],
+    bagCap: L.bag,
+    actionIdx: 0,     // 已用行动数
+    phase: "search",  // search | exfil
+    gambles: 0,        // 已赌轮数
+    startAt: Date.now(),
+    looted: 0,        // 本局累计搜到的物资件数（含因容量丢弃）
+    maxSingle: 0,     // 本局单次最大收益
+    kills: 0,
+    stats: { loot: 0, enemy: 0, none: 0, win: 0, lose: 0 }
+  };
+
+  log("════════ 新对局开始 ════════", "sys", false);
+  log(`选择【${L.name}】：成本 -${L.cost}，背包 ${L.bag} 格，战斗胜率 ${pct(currentWinRate())}`, "warn");
+  log(`目标：在 ${CONFIG.baseActions} 次行动内搜集物资并安全撤离。`, "dim");
+
+  renderAll();
+}
+
+/* ---------- 11. 一次搜索行动 ---------- */
+function doAction(isGamble){
+  if(!G || G.phase !== "search") return;
+
+  // 判定本次行动类型
+  const c = CONFIG.actionChance;
+  const r = Math.random();
+  G.actionIdx++;
+  let type;
+  if(r < c.loot) type = "loot";
+  else if(r < c.loot + c.enemy) type = "enemy";
+  else type = "none";
+
+  const tag = `行动 ${G.actionIdx}/${CONFIG.baseActions}`;
+
+  // 关键规则：新增物资"顶替"背包里价值最低的那件（未满则直接放入），
+  // 这样背包满后依然有机会捡到稀有，好货不会被普通货永久卡死。
+  function tryAddItem(name, value, rare){
+    const item = { name, value, rare };
+    if(G.bag.length < G.bagCap){
+      G.bag.push(item);
+      return { added:true, dropped:null };
+    }
+    // 找出最不值钱的一件
+    let minIdx = 0;
+    for(let i=1;i<G.bag.length;i++) if(G.bag[i].value < G.bag[minIdx].value) minIdx = i;
+    if(G.bag[minIdx].value < value){
+      const dropped = G.bag[minIdx];
+      G.bag[minIdx] = item;
+      return { added:true, dropped };
+    }
+    return { added:false, dropped:null };
+  }
+
+  if(type === "loot"){
+    G.stats.loot++;
+    const L = CONFIG.loadouts[G.loadout];
+    // 全装会小幅提高"稀有"概率（searchBonus 为百分点）
+    const rareP = clamp(CONFIG.rareChance + (L.searchBonus || 0) * 0.005, 0, 0.95);
+    const isRare = Math.random() < rareP;
+    let v = Math.round(rand(CONFIG.lootValue.min, CONFIG.lootValue.max));
+    let name;
+    if(isRare){
+      v = Math.round(v * rareMul());
+      name = pick(["密封档案", "军用芯片", "加密硬盘", "稀有合金", "信号模组"]);
+    }else{
+      name = pick(["废弃电池", "散装零件", "罐头补给", "铜线卷", "旧手套", "应急药包", "土制消音器"]);
+    }
+
+    const res = tryAddItem(name, v, isRare);
+    if(res.added){
+      G.looted++;
+      if(v > G.maxSingle) G.maxSingle = v;  // 本局最大单次收益
+      const dropTxt = res.dropped ? `（顶替【${res.dropped.name}】${fmt(res.dropped.value)}）` : "";
+      if(isRare){
+        log(`${tag} · 搜到稀有物资【${name}】价值 +${fmt(v)}（×${rareMul().toFixed(1)}）${dropTxt}`, "rare");
+      }else{
+        log(`${tag} · 搜到物资【${name}】价值 +${fmt(v)}${dropTxt}`, "good");
+      }
+    }else{
+      log(`${tag} · 发现【${name}】(${fmt(v)})，比背包里最差的还便宜，放弃。`, "warn");
+    }
+  }
+  else if(type === "enemy"){
+    G.stats.enemy++;
+    const win = Math.random() < currentWinRate();
+    if(win){
+      G.stats.win++;
+      // 战斗奖励：战利品 = 一件物资 × 1.2 倍
+      const v = Math.round(rand(CONFIG.lootValue.min, CONFIG.lootValue.max) * 1.2);
+      G.kills++;
+      const res = tryAddItem("缴获战利品", v, false);
+      if(res.added){
+        G.looted++;
+        if(v > G.maxSingle) G.maxSingle = v;
+        log(`${tag} · 遭遇敌人 → 【交火胜利】缴获战利品 +${fmt(v)}`, "good");
+      }else{
+        log(`${tag} · 遭遇敌人 → 【交火胜利】，但背包已满，战利品不值当。`, "warn");
+      }
+    }else{
+      G.stats.lose++;
+      log(`${tag} · 遭遇敌人 → 【交火失败】背包被清空！`, "bad");
+      G.bag = [];
+      endRun(false, "交火阵亡");
+      return;
+    }
+  }
+  else{
+    G.stats.none++;
+    log(`${tag} · 无事发生…… 区域已被搜刮一空。`, "dim");
+  }
+
+  // 判断是否进入撤离阶段
+  const done = G.actionIdx >= CONFIG.baseActions;
+  if(done){
+    G.phase = "exfil";
+    log("— 基础行动已用完，进入撤离阶段 —", "sys");
+  }
+  renderAll();
+  // 如果行动已耗尽，弹出撤离决策
+  if(done) setTimeout(openExfilModal, 60);
+}
+
+/* ---------- 12. 撤离阶段：立即撤离 / 再赌一轮 ---------- */
+function exfilNow(){
+  if(!G || G.phase !== "exfil") return;
+  const rate = currentAmbushRate();
+  // 最后的撤离检定：只要还在赌局中，撤离时刻本身仍可能被埋伏
+  if(Math.random() < rate){
+    log(`撤离途中被埋伏！撤离失败（埋伏概率 ${pct(rate)}）。`, "bad");
+    endRun(false, "撤离途中被埋伏");
+    return;
+  }
+  log(`安全撤离成功，带出物资价值 ${fmt(bagValue())}。`, "good");
+  endRun(true, G.gambles > 0 ? `安全撤离（赌${G.gambles}轮后）` : "顺利撤离");
+}
+
+function gamble(liveMode){
+  if(!G || G.phase !== "exfil") return;
+  G.gambles++;
+  const rate = currentAmbushRate();
+  G.bagCap += Math.max(0, CONFIG.gambleBagBonus);
+  G.phase = "search";
+
+  log(`║ 再赌一轮：埋伏概率升至 ${pct(rate)}，背包 +${CONFIG.gambleBagBonus} 格`, "warn");
+  renderAll();
+
+  if(liveMode){
+    // 弹窗模式下先关弹窗再执行，避免遮挡
+    hideModal();
+  }
+  doAction(true);
+}
+
+/* ---------- 13. 对局结束 ---------- */
+function endRun(success, reason){
+  const elapsed = ((Date.now() - G.startAt) / 1000).toFixed(1);
+  const rawVal  = bagValue();
+  const gained  = success ? Math.round(rawVal) : 0; // 撤离成功全额入账，失败归零
+
+  save.total += gained;
+  if(save.total > save.peak) save.peak = save.total;
+  save.runs++;
+  if(success) save.success++;
+  if(gained > save.bestRun) save.bestRun = gained;
+  persist();
+
+  const reasonText = success
+    ? `行动完成 · 用时 ${elapsed} 秒`
+    : reason;
+
+  showModal(
+    success ? "撤离成功" : "撤离失败",
+    `${reasonText}　|　${CONFIG.loadouts[G.loadout].name}`,
+    [
+      ["本局耗时", elapsed + " 秒"],
+      ["本次收益", (gained >= 0 ? "+" : "") + fmt(gained), false],
+      ["本局最大单次收益", fmt(G.maxSingle)],
+      ["累计资产", fmt(save.total)],
+      ["历史最高资产", fmt(save.peak)],
+      ["本局统计", `搜索成功 ${G.stats.loot} · 交火胜 ${G.stats.win} · 交火负 ${G.stats.lose} · 无事 ${G.stats.none}`]
+    ],
+    [
+      { label: "轻装再来一局", cls: "", fn: ()=> startRun("light") },
+      { label: "全装再来一局", cls: "primary", fn: ()=> startRun("heavy") }
+    ]
+  );
+
+  // 结算日志
+  log("──────── 对局结算 ────────", "sys", false);
+  log(`结果：${success?"撤离成功":"撤离失败"} / ${reasonText}`, success?"good":"bad");
+  log(`本次收益 ${gained>=0?"+":""}${fmt(gained)}　最大单次 ${fmt(G.maxSingle)}　累计资产 ${fmt(save.total)}`, "warn");
+
+  G = null;
+  renderAll();
+}
+
+/* ---------- 14. 总渲染 ---------- */
+function renderAll(){
+  renderStats();
+  renderBag();
+  renderRisk();
+  renderPips();
+
+  const act  = document.getElementById("actions");
+  const desc = document.getElementById("phaseText");
+  act.innerHTML = "";
+
+  const mkBtn = (label, sub, cls, fn, disabled) => {
+    const b = document.createElement("button");
+    b.className = cls || "";
+    b.innerHTML = label + (sub ? `<small>${sub}</small>` : "");
+    b.disabled = !!disabled;
+    b.onclick = fn;
+    act.appendChild(b);
+    return b;
+  };
+
+  if(!G){
+    // ===== 待机：选择进场 =====
+    desc.textContent = `当前累计资产 ${fmt(save.total)}。选择进场方式：轻装适合保本磨进度，全装适合抢高价值。`;
+    const L1 = CONFIG.loadouts.light, L2 = CONFIG.loadouts.heavy;
+    mkBtn(`A. ${L1.name}　成本 ${fmt(L1.cost)}`,
+      `${L1.desc} · 背包 ${L1.bag} 格 · 胜率 ${pct(currentWinRateFor("light"))}`,
+      "", ()=>startRun("light"), save.total < L1.cost);
+    mkBtn(`B. ${L2.name}　成本 ${fmt(L2.cost)}`,
+      `${L2.desc} · 背包 ${L2.bag} 格 · 胜率 ${pct(currentWinRateFor("heavy"))}`,
+      "primary", ()=>startRun("heavy"), save.total < L2.cost);
+    return;
+  }
+
+  if(G.phase === "search"){
+    desc.innerHTML = `行动中：第 <b style="color:var(--green)">${Math.min(G.actionIdx+1, CONFIG.baseActions)}</b> / ${CONFIG.baseActions} 次 · 背包 ${G.bag.length}/${G.bagCap} · 物资 ${fmt(bagValue())}`;
+    mkBtn("▶ 执行搜索/移动", (G.gambles>0 ? `赌局第 ${G.gambles} 轮 · 本轮后进入撤离阶段` : "推进一次行动，触发搜刮/交火/无事"), "primary", ()=>doAction(false));
+    return;
+  }
+
+  // ===== 撤离阶段 =====
+  const rate = currentAmbushRate();
+  desc.innerHTML = `撤离阶段 · 背包 ${G.bag.length}/${G.bagCap} · 物资 <b style="color:var(--amber)">${fmt(bagValue())}</b> · 当前埋伏概率 <b style="color:${rate>0.5?'var(--red)':'var(--amber)'}">${pct(rate)}</b>`;
+  mkBtn(`✔ 立即撤离（安全带走 ${fmt(bagValue())}）`,
+    "结算本局物资，风险归零", "primary", exfilNow);
+  const nextRate = Math.min(CONFIG.ambushMax, CONFIG.ambushStep + rate);
+  mkBtn(`⚠ 再赌一轮（暴露风险 ↑）`,
+    `多搜 ${CONFIG.gambleActions} 次、背包 +${CONFIG.gambleBagBonus} 格；赌后撤离时埋伏概率 ${pct(nextRate)}（现为 ${pct(rate)}）`,
+    "amber", ()=> gamble(true));
+}
+
+// 撤离决策弹窗：核心"要不要贪"的关键一刻
+function openExfilModal(){
+  if(!G || G.phase !== "exfil") return;
+  const rate  = currentAmbushRate();
+  const val   = bagValue();
+  const nextR = Math.min(CONFIG.ambushMax, CONFIG.ambushBase + CONFIG.ambushStep * G.gambles);
+  const ev    = Math.round(val * (1 - rate)); // 期望收益（近似：当前物资现值 × 安全撤离率）
+  showModal(
+    "撤离窗口",
+    G.gambles > 0 ? `已赌 ${G.gambles} 轮　|　${CONFIG.loadouts[G.loadout].name}` : CONFIG.loadouts[G.loadout].name,
+    [
+      ["背包物资", fmt(val) + `（${G.bag.length}/${G.bagCap} 格）`],
+      ["现在撤离 · 安全率", pct(1 - rate)],
+      ["期望到手（近似）", fmt(ev)],
+      ["再赌一轮 · 埋伏率", pct(nextR)],
+      ["本轮可得", `约 +${fmt(CONFIG.lootValue.min)}~${fmt(CONFIG.lootValue.max)}（稀有 ×${rareMul().toFixed(1)}）`]
+    ],
+    [
+      { label: `✔ 立即撤离（${fmt(val)}）`, cls: "primary", fn: exfilNow },
+      { label: `⚠ 再赌一轮`, cls: "amber", fn: ()=> gamble(true) }
+    ]
+  );
+}
+
+// 待机时预览胜率（G 为空，单独算）
+function currentWinRateFor(key){
+  return clamp(CONFIG.baseWinRate + CONFIG.loadouts[key].winBonus, 0.05, 0.95);
+}
+
+/* ---------- 15. 调参面板 ---------- */
+const SLIDERS = [
+  { key:"startFunds",   label:"开局资金（新档生效）", min:0,   max:5000, step:100, unit:"",
+    get:()=>DEFAULT_CONFIG.startFunds, set:(v)=>{DEFAULT_CONFIG.startFunds=v;} },
+  { key:"baseWinRate",  label:"基础战斗胜率",       min:0.05,max:0.90, step:0.01, fmtP:true },
+  { key:"lootChance",   label:"搜到物资概率",       min:0.05,max:0.90, step:0.01, fmtP:true,
+    get:()=>CONFIG.actionChance.loot,
+    set:(v)=>{ const e=CONFIG.actionChance.enemy, n=CONFIG.actionChance.none, s=v; const k=s+e+n; CONFIG.actionChance.loot=+(s/k).toFixed(3); } },
+  { key:"rareChance",   label:"稀有物资概率",       min:0,   max:0.6,  step:0.01, fmtP:true },
+  { key:"rareMultiplier", label:"稀有物资倍率",     min:1,   max:10,   step:0.1,  unit:"×" },
+  { key:"ambushBase",   label:"首次赌局埋伏概率",   min:0,   max:0.6,  step:0.01, fmtP:true },
+  { key:"ambushStep",   label:"每赌一轮递增",       min:0.01,max:0.35, step:0.01, fmtP:true },
+  { key:"heavyCost",    label:"全装进场成本",       min:0,   max:1000, step:50,
+    get:()=>CONFIG.loadouts.heavy.cost, set:(v)=>{CONFIG.loadouts.heavy.cost=v;} },
+  { key:"lightCost",    label:"轻装进场成本",       min:0,   max:500,  step:10,
+    get:()=>CONFIG.loadouts.light.cost, set:(v)=>{CONFIG.loadouts.light.cost=v;} }
+];
+
+function buildSliders(){
+  const box = document.getElementById("cfgSliders");
+  box.innerHTML = "";
+  SLIDERS.forEach(s=>{
+    const wrap = document.createElement("label");
+    const val = s.get ? s.get() : CONFIG[s.key];
+    const shown = s.fmtP ? pct(val) : fmt(val) + (s.unit||"");
+    wrap.innerHTML = `<div class="row"><span>${s.label}</span><b data-v="${s.key}">${shown}</b></div>
+      <input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${val}" data-k="${s.key}">`;
+    const input = wrap.querySelector("input");
+    const out   = wrap.querySelector("b");
+    input.addEventListener("input", ()=>{
+      const v = parseFloat(input.value);
+      if(s.set) s.set(v); else CONFIG[s.key] = v;
+      out.textContent = s.fmtP ? pct(v) : fmt(v) + (s.unit||"");
+      // 实时刷新：风险条、待机按钮上的胜率等
+      if(G) renderRisk();
+      refreshIdlePreview();
+    });
+    box.appendChild(wrap);
+  });
+}
+
+// 待机时若在撤离阶段已有赌局，风险需实时反映
+function refreshIdlePreview(){
+  if(!G){
+    const act = document.getElementById("actions");
+    // 仅更新按钮上的胜率预览文字
+    const [b1,b2] = act.querySelectorAll("button small");
+    const L1 = CONFIG.loadouts.light, L2 = CONFIG.loadouts.heavy;
+    if(b1) b1.textContent = `${L1.desc} · 背包 ${L1.bag} 格 · 胜率 ${pct(currentWinRateFor("light"))}`;
+    if(b2) b2.textContent = `${L2.desc} · 背包 ${L2.bag} 格 · 胜率 ${pct(currentWinRateFor("heavy"))}`;
+    // 成本文字同步
+    const bs = act.querySelectorAll("button");
+    if(bs[0]) bs[0].childNodes[0].textContent = `A. ${L1.name}　成本 ${fmt(L1.cost)}`;
+    if(bs[1]) bs[1].childNodes[0].textContent = `B. ${L2.name}　成本 ${fmt(L2.cost)}`;
+  }else{
+    // 进行中的对局：重新渲染风险与行动提示
+    renderRisk();
+  }
+}
+
+document.getElementById("btnApply").onclick = ()=>{
+  hideModal();
+  // 若在局中，直接作废当前局（不计入统计），带着已扣成本重开
+  log("调参已应用，重新开始新对局……", "sys");
+  G = null;
+  renderAll();
+  showModal("调参已应用", "新的数值已生效。请重新选择进场方式。", [], [
+    { label:"轻装进场", fn: ()=>startRun("light") },
+    { label:"全装进场", cls:"primary", fn: ()=>startRun("heavy") }
+  ]);
+};
+document.getElementById("btnReset").onclick = ()=>{
+  CONFIG = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  buildSliders();
+  refreshIdlePreview();
+  log("数值已恢复默认。", "dim");
+};
+
+/* ---------- 16. 首局资金与启动 ---------- */
+(function boot(){
+  buildSliders();
+  // 首次游玩赠予开局资金
+  if(!localStorage.getItem(SAVE_KEY)){
+    save.total = DEFAULT_CONFIG.startFunds;
+    save.peak = DEFAULT_CONFIG.startFunds;
+    persist();
+  }
+  log("系统在线。", "sys", false);
+  log("提示：累计资产与历史最高已本地存档，刷新不丢；右侧可实时调参。", "dim");
+  renderAll();
+})();
+</script>
+</body>
+</html>
